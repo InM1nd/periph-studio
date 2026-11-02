@@ -352,6 +352,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18p
 .sx-modes .mode { text-align: center; }
 .sx-note { margin-top: 12px; }
 .ms-refresh { margin-top: 16px; }
+.ms-pick { margin-top: 14px; }
 .ms-presets { display: flex; gap: 6px; flex-wrap: wrap; }
 .ms-presets button { background: rgba(0, 0, 0, .22); border: 1px solid var(--line); border-radius: 9px; padding: 5px 11px; color: var(--muted); font-size: 12.5px; transition: all .15s; }
 .ms-presets button:hover { color: var(--text); border-color: rgba(255, 255, 255, .18); }

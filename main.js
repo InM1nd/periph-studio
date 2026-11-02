@@ -9,6 +9,7 @@ const { Kt87, KT87_EFFECTS, KT87_DIRECTIONS } = require('./kt87');
 const { Logitech } = require('./logitech');
 const { Via } = require('./via');
 const { Sonix, SONIX_MODELS } = require('./sonix');
+const { Razer } = require('./razer');
 const ROYUAN = require('./profiles/royuan.json');
 
 const kb = new Keyboard();
@@ -16,6 +17,7 @@ const kt = new Kt87();
 const lg = new Logitech();
 const via = new Via();
 const sx = new Sonix();
+const rz = new Razer();
 let win = null;
 
 const ALLOWED = new Set([
@@ -114,13 +116,27 @@ ipcMain.handle('kt87:meta', () => ({ effects: KT87_EFFECTS, directions: KT87_DIR
 kt.on('state', (s) => send('kt87:state', s));
 kt.on('log', (l) => send('kb:log', l));
 
-/* ---------- мыши Logitech ---------- */
-ipcMain.handle('mouse:state', () => lg.state);
-ipcMain.handle('mouse:refresh', wrap(() => lg.scan().then(() => lg.state.devices)));
-ipcMain.handle('mouse:setDpi', wrap((idx, dpi) => lg.setDpi(idx, dpi)));
-ipcMain.handle('mouse:setRate', wrap((idx, ms) => lg.setRate(idx, ms)));
-lg.on('state', (s) => send('mouse:state', s));
+/* ---------- мыши: Logitech HID++ и Razer — один общий список ---------- */
+const mouseState = () => ({
+  devices: [
+    ...lg.state.devices.map((d) => ({ ...d, src: 'logitech', id: 'lg:' + d.idx })),
+    ...rz.state.devices.map((d) => ({ ...d, id: 'rz:' + d.id })),
+  ],
+});
+const mouseCall = (id, lgFn, rzFn) => {
+  const [src, key] = String(id).split(':');
+  if (src === 'lg') return lgFn(Number(key));
+  if (src === 'rz') return rzFn(key);
+  throw new Error('Неизвестная мышь');
+};
+ipcMain.handle('mouse:state', () => mouseState());
+ipcMain.handle('mouse:refresh', wrap(async () => { await lg.scan(); await rz.poll(); return mouseState(); }));
+ipcMain.handle('mouse:setDpi', wrap((id, dpi) => mouseCall(id, (k) => lg.setDpi(k, dpi), (k) => rz.setDpi(k, dpi))));
+ipcMain.handle('mouse:setRate', wrap((id, hz) => mouseCall(id, (k) => lg.setRate(k, hz), (k) => rz.setRate(k, hz))));
+lg.on('state', () => send('mouse:state', mouseState()));
+rz.on('state', () => send('mouse:state', mouseState()));
 lg.on('log', (l) => send('kb:log', l));
+rz.on('log', (l) => send('kb:log', l));
 
 /* ---------- QMK / VIA ---------- */
 ipcMain.handle('via:state', () => via.state);
@@ -154,13 +170,14 @@ function inventory() {
   return [...map.values()].map((e) => {
     const has = (u) => e.interfaces.some((i) => i.usage === u);
     // мыши Logitech объявляют и клавиатурный интерфейс (кнопки-макросы), а клавиатуры — мышиный
-    const logiMouse = e.vid === 0x046d && has('0001/0002') && !/keyboard|клавиат/i.test(e.product);
+    const logiMouse = (e.vid === 0x046d || e.vid === 0x1532) && has('0001/0002') && !/keyboard|клавиат|blackwidow|huntsman|ornata|cynosa/i.test(e.product);
     const kind = logiMouse ? 'mouse' : has('0001/0006') ? 'keyboard' : has('0001/0002') ? 'mouse' : 'other';
     let support = null;
     if (ROYUAN_IDS.has(e.vid * 65536 + e.pid)) support = 'royuan';
     else if (e.vid === 0x0416 && e.pid === 0xb23c) support = 'b23c';
     else if (SONIX_MODELS.some((m) => m.vid === e.vid && m.pid === e.pid) && e.interfaces.some((i) => i.usage.startsWith('FF13/'))) support = 'sonix';
     else if (e.vid === 0x046d && has('FF00/0002')) support = 'logitech';
+    else if (e.vid === 0x1532 && has('0001/0002')) support = 'razer';
     else if (has('FF60/0061')) support = 'via';
     return { ...e, kind, support };
   }).filter((e) => e.kind !== 'other' || e.support).sort((a, b) => (a.support ? 0 : 1) - (b.support ? 0 : 1));
@@ -196,6 +213,7 @@ app.whenReady().then(() => {
   lg.start();
   via.start();
   sx.start();
+  rz.start();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
@@ -205,5 +223,6 @@ app.on('window-all-closed', () => {
   lg.stop();
   via.stop();
   sx.stop();
+  rz.stop();
   if (process.platform !== 'darwin') app.quit();
 });

@@ -10,7 +10,8 @@
 | Keydous / Royuan, другие классы | 112 моделей yzw и др. | только опознание | запись отключена |
 | Winbond 0416:B23C | KT87, KT108, Pulsar PCMK… | подсветка клавиш и логотипа | KT87 проверена |
 | Sonix / DriveAll | MSI Forge GK600 TKL Wireless (0DB0:EA47), Womier SK80, Xinmeng M87 Pro, Aula F98 Pro | подсветка: 21 режим, цвет, радуга, яркость, скорость | по описанию (протокол Womier SK80) |
-| Logitech HID++ | мыши через LIGHTSPEED/Unifying и по кабелю | заряд, DPI, частота опроса | PRO X Wireless проверена |
+| Logitech HID++ | мыши через Lightspeed / Unifying / Bolt и по кабелю, в т.ч. новые (Superlight 2, G502 X…) с расширенным DPI 0x2202 и частотой до 8000 Гц (0x8061) | заряд, DPI, частота опроса; встроенные профили переключаются в управление с ПК | PRO X Wireless проверена, Superlight 2 — на эмуляции |
+| Razer | мыши Razer (протокол openrazer) | заряд, DPI, частота опроса (в т.ч. HyperPolling до 8000 Гц) | по описанию |
 | QMK / VIA | клавиатуры с raw HID FF60 | сведения, подсветка RGB Matrix / RGB Light | по описанию протокола |
 
 Неизвестное устройство: на вкладке «Устройства» кнопка «Отчёт…» сохраняет его USB-ID и список
@@ -48,6 +49,7 @@ HID-интерфейсов в файл (без серийных номеров).
 - `hid.js` — Keydous/Royuan (feature reports, протокол YC200/RY108), `profiles/royuan.json` — модели.
 - `kt87.js` — Winbond 0416:B23C (output reports, протокол из открытого разбора).
 - `logitech.js` — HID++ 2.0 (long reports 0x11, через HIDAsync).
+- `razer.js` — мыши Razer (feature reports 90 байт, протокол openrazer).
 - `via.js` — QMK/VIA raw HID.
 - `sonix.js` — Sonix/DriveAll (feature reports на FF13, протокол из драйвера Womier SK80, MIT).
 - `tools/gen-royuan-profiles.js` — пересобрать профили из копии БД драйвера Keydous.

@@ -1,20 +1,31 @@
 'use strict';
 /*
- * Мыши Logitech по HID++ 2.0 (через приёмник LIGHTSPEED/Unifying или по кабелю).
+ * Мыши Logitech по HID++ 2.0 (приёмники Unifying / Lightspeed / Bolt или кабель).
  * Long report 0x11, 20 байт, vendor-коллекция usagePage 0xFF00 / usage 2:
  *   [0x11, индекс устройства, индекс фичи, (функция << 4) | swId, параметры…]
  * Ошибка HID++ 2.0: [0x11, idx, 0xFF, фича, функция|swId, код].
- * Используемые фичи: 0x0005 имя, 0x1004 батарея, 0x2201 DPI, 0x8060 частота опроса.
- * Проверено на PRO X Wireless (приёмник C547): чтение и смена DPI. Запись — только по кнопкам интерфейса.
+ * Фичи (номера функций — как в Solaar):
+ *   0x0005 имя
+ *   0x1004 батарея (unified), 0x1000 батарея (уровень), 0x1001 батарея (напряжение)
+ *   0x2201 DPI;            0x2202 расширенный DPI (Superlight 2, G502 X…): список 0x2, чтение 0x5, запись 0x6
+ *   0x8060 частота 1–8 мс; 0x8061 расширенная частота до 8000 Гц: маска 0x1, чтение 0x2, запись 0x3
+ *   0x8100 встроенные профили: чтение режима 0x2 (1 = профили включены), запись 0x1 (2 = управление с ПК)
+ * Проверено на PRO X Wireless (0x2201/0x8060). Запись — только по кнопкам интерфейса.
  */
 const HID = require('node-hid');
 const EventEmitter = require('events');
 
 const VID = 0x046d;
 const SW = 0x0b; // свой swId, чтобы не путать ответы с запросами G HUB
-const FEAT = { NAME: 0x0005, UBATT: 0x1004, DPI: 0x2201, RATE: 0x8060 };
+const FEAT = {
+  NAME: 0x0005, UBATT: 0x1004, BATT: 0x1000, VOLT: 0x1001,
+  DPI: 0x2201, DPI2: 0x2202, RATE: 0x8060, RATE2: 0x8061, ONBOARD: 0x8100,
+};
+// приёмники: Unifying, Nano, Lightspeed, Bolt
+const RECEIVERS = new Set([0xc52b, 0xc52f, 0xc531, 0xc532, 0xc534, 0xc539, 0xc53a, 0xc53d, 0xc53f, 0xc541, 0xc545, 0xc547, 0xc548, 0xc54d]);
 const LEVELS = { 1: 'critical', 2: 'low', 4: 'good', 8: 'full' };
 const CHARGE = { 0: 'discharging', 1: 'charging', 2: 'charging', 3: 'full', 4: 'error' };
+const RATE2_HZ = [125, 250, 500, 1000, 2000, 4000, 8000]; // биты маски 0x8061: 8 мс … 125 мкс
 
 const hex = (a) => Array.from(a).map((x) => x.toString(16).padStart(2, '0')).join(' ');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,6 +41,7 @@ class Logitech extends EventEmitter {
     this.timer = null;
     this.lastScan = 0;
     this.lastRefresh = 0;
+    this.tried = new Set(); // пути, где устройств не нашлось — пробуем следующий
   }
 
   start() {
@@ -51,14 +63,25 @@ class Logitech extends EventEmitter {
     if (this.busyPoll) return;
     this.busyPoll = true;
     try {
-      const info = HID.devices().find((d) => d.vendorId === VID && d.usagePage === 0xff00 && d.usage === 2);
-      if (this.dev && (!info || info.path !== this.path)) this._drop();
-      if (!this.dev && info) await this._open(info);
+      const cands = HID.devices().filter((d) => d.vendorId === VID && d.usagePage === 0xff00 && d.usage === 2);
+      if (this.dev && !cands.some((d) => d.path === this.path)) this._drop();
+      if (!this.dev) {
+        // приёмник и мышь по кабелю — разные пути; берём ещё не опробованный
+        const info = cands.find((d) => !this.tried.has(d.path)) || cands[0];
+        if (!cands.some((d) => !this.tried.has(d.path))) this.tried.clear();
+        if (info) await this._open(info);
+      }
       if (!this.dev) return;
       const now = Date.now();
-      // пустой приёмник (мышь спит/выключена) — пересканируем раз в 15 с, заряд обновляем раз в минуту
-      if (!this.state.devices.length && now - this.lastScan > 15000) await this.scan();
-      else if (this.state.devices.length && now - this.lastRefresh > 60000) await this.refresh();
+      if (!this.state.devices.length && now - this.lastScan > 15000) {
+        await this.scan();
+        // на этом пути ничего — при следующем опросе попробуем другой (если он есть)
+        if (!this.state.devices.length && cands.length > 1) { this.tried.add(this.path); this._drop(); }
+      } else if (this.state.devices.length) {
+        // спящую мышь проверяем часто — пошевелили, и данные появились; бодрую — раз в минуту (заряд)
+        const sleeping = this.state.devices.some((d) => !d.online);
+        if (now - this.lastRefresh > (sleeping ? 5000 : 60000)) await this.refresh();
+      }
     } catch (e) {
       this.log('ERR', e.message);
     } finally {
@@ -73,13 +96,14 @@ class Logitech extends EventEmitter {
       this.dev = await HID.HIDAsync.open(info.path);
     } catch (e) {
       this.log('ERR', 'open: ' + e.message);
+      this.tried.add(info.path);
       return;
     }
     this.path = info.path;
-    this.receiver = /receiver/i.test(info.product || '') || info.productId === 0xc547 || info.productId === 0xc539 || info.productId === 0xc52b;
+    this.receiver = RECEIVERS.has(info.productId) || /receiver/i.test(info.product || '');
     this.dev.on('data', (d) => this._onData(d));
     this.dev.on('error', () => this._drop());
-    this.log('OK', 'подключено: ' + (info.product || info.productId.toString(16)));
+    this.log('OK', `подключено: ${info.product || info.productId.toString(16)} (${this.receiver ? 'приёмник' : 'напрямую'})`);
     this.setState({ connected: true, devices: [] });
     this.lastScan = 0;
   }
@@ -131,7 +155,8 @@ class Logitech extends EventEmitter {
         for (const [k, id] of Object.entries(FEAT)) d.f[k] = await this.featureIndex(idx, id);
         d.name = await this.readName(d);
         found.push(d);
-        this.log('OK', `устройство ${idx}: ${d.name} (HID++ ${d.protocol})`);
+        const has = Object.entries(d.f).filter(([, v]) => v).map(([k]) => k).join(', ');
+        this.log('OK', `устройство ${idx}: ${d.name} (HID++ ${d.protocol}; ${has})`);
       } catch (_) { /* слот пуст или устройство спит */ }
     }
     this.devs = found;
@@ -150,25 +175,73 @@ class Logitech extends EventEmitter {
     return s.slice(0, len);
   }
 
+  async readBattery(d) {
+    if (d.f.UBATT) {
+      const r = await this.req(d.idx, d.f.UBATT, 1);
+      return { percent: r[0] || null, level: LEVELS[r[1]] || null, charging: CHARGE[r[2]] || 'unknown' };
+    }
+    if (d.f.BATT) {
+      const r = await this.req(d.idx, d.f.BATT, 0);
+      const st = { 0: 'discharging', 1: 'charging', 2: 'charging', 3: 'full', 4: 'charging' }[r[2]] || 'unknown';
+      return { percent: r[0] || null, level: null, charging: st };
+    }
+    if (d.f.VOLT) {
+      const r = await this.req(d.idx, d.f.VOLT, 0);
+      const mv = r.readUInt16BE(0);
+      // грубая оценка по напряжению Li-ion: 3.5 В ≈ 0 %, 4.1 В ≈ 100 %
+      const percent = Math.max(1, Math.min(100, Math.round(((mv - 3500) / 600) * 100)));
+      return { percent, approx: true, mv, level: null, charging: r[2] & 0x80 ? 'charging' : 'discharging' };
+    }
+    return null;
+  }
+
+  async readDpi(d) {
+    if (d.f.DPI) {
+      const list = await this.req(d.idx, d.f.DPI, 1, [0]);
+      const now = await this.req(d.idx, d.f.DPI, 2, [0]);
+      return { value: now.readUInt16BE(1), def: now.readUInt16BE(3), ...decodeDpiList(list, 1) };
+    }
+    if (d.f.DPI2) {
+      // список по страницам: [датчик, направление X, страница], первые 3 байта ответа — эхо
+      let bytes = Buffer.alloc(0);
+      for (let page = 0; page < 16; page++) {
+        const r = await this.req(d.idx, d.f.DPI2, 2, [0, 0, page]);
+        bytes = Buffer.concat([bytes, r.subarray(3)]);
+        if (bytes.length >= 2 && hasListEnd(bytes)) break;
+      }
+      const cap = await this.req(d.idx, d.f.DPI2, 1, [0]);
+      const now = await this.req(d.idx, d.f.DPI2, 5, [0]);
+      d.dpi2 = { hasY: !!(cap[2] & 1), lod: now[9] };
+      const x = now.readUInt16BE(1);
+      return { value: x || now.readUInt16BE(3), def: now.readUInt16BE(3), ...decodeDpiList(bytes, 0) };
+    }
+    return null;
+  }
+
+  async readRate(d) {
+    if (d.f.RATE) {
+      const mask = (await this.req(d.idx, d.f.RATE, 0))[0];
+      const ms = (await this.req(d.idx, d.f.RATE, 1))[0];
+      const supported = [];
+      for (let i = 0; i < 8; i++) if (mask & (1 << i)) supported.push(Math.round(1000 / (i + 1)));
+      return { hz: Math.round(1000 / ms), supported: supported.filter((h) => [125, 250, 500, 1000].includes(h)) };
+    }
+    if (d.f.RATE2) {
+      const mask = (await this.req(d.idx, d.f.RATE2, 1)).readUInt16BE(0);
+      const cur = (await this.req(d.idx, d.f.RATE2, 2))[0];
+      const supported = RATE2_HZ.filter((_, i) => mask & (1 << i));
+      return { hz: RATE2_HZ[cur] || null, supported };
+    }
+    return null;
+  }
+
   async readDevice(d) {
     const out = { idx: d.idx, name: d.name, protocol: d.protocol };
     try {
-      if (d.f.UBATT) {
-        const r = await this.req(d.idx, d.f.UBATT, 1);
-        out.battery = { percent: r[0] || null, level: LEVELS[r[1]] || null, charging: CHARGE[r[2]] || 'unknown' };
-      }
-      if (d.f.DPI) {
-        const list = await this.req(d.idx, d.f.DPI, 1, [0]);
-        const now = await this.req(d.idx, d.f.DPI, 2, [0]);
-        out.dpi = { value: now.readUInt16BE(1), def: now.readUInt16BE(3), ...decodeDpiList(list) };
-      }
-      if (d.f.RATE) {
-        const mask = (await this.req(d.idx, d.f.RATE, 0))[0];
-        const ms = (await this.req(d.idx, d.f.RATE, 1))[0];
-        const supported = [];
-        for (let i = 0; i < 8; i++) if (mask & (1 << i)) supported.push(i + 1);
-        out.rate = { ms, supported };
-      }
+      out.battery = await this.readBattery(d);
+      out.dpi = await this.readDpi(d);
+      out.rate = await this.readRate(d);
+      if (d.f.ONBOARD) out.onboard = (await this.req(d.idx, d.f.ONBOARD, 2))[0] === 1;
       out.online = true;
     } catch (e) {
       out.online = false;
@@ -191,39 +264,72 @@ class Logitech extends EventEmitter {
     return d;
   }
 
+  /** при включённых встроенных профилях мышь игнорирует DPI/частоту с ПК — переводим в управление с ПК */
+  async _hostMode(d) {
+    if (!d.f.ONBOARD) return;
+    const mode = (await this.req(d.idx, d.f.ONBOARD, 2))[0];
+    if (mode !== 1) return;
+    this.log('TX', `устройство ${d.idx}: встроенные профили -> управление с ПК`);
+    await this.req(d.idx, d.f.ONBOARD, 1, [0x02]);
+    await sleep(50);
+  }
+
   async setDpi(idx, dpi) {
     const d = this._find(idx);
-    if (!d.f.DPI) throw new Error('Мышь не поддерживает смену DPI');
+    if (!d.f.DPI && !d.f.DPI2) throw new Error('Мышь не поддерживает смену DPI');
     const cur = this.state.devices.find((x) => x.idx === idx);
     const lim = cur && cur.dpi;
     dpi = Math.round(Number(dpi));
     if (!lim || dpi < lim.min || dpi > lim.max) throw new Error('DPI вне допустимого диапазона');
+    await this._hostMode(d);
     this.log('TX', `DPI ${idx} -> ${dpi}`);
-    await this.req(idx, d.f.DPI, 3, [0, dpi >> 8, dpi & 255]);
-    await sleep(50);
-    const now = await this.req(idx, d.f.DPI, 2, [0]);
-    if (now.readUInt16BE(1) !== dpi) throw new Error('Мышь не приняла DPI (прочитано ' + now.readUInt16BE(1) + ')');
+    let got;
+    if (d.f.DPI) {
+      await this.req(idx, d.f.DPI, 3, [0, dpi >> 8, dpi & 255]);
+      await sleep(50);
+      got = (await this.req(idx, d.f.DPI, 2, [0])).readUInt16BE(1);
+    } else {
+      const y = d.dpi2 && d.dpi2.hasY ? dpi : 0;
+      await this.req(idx, d.f.DPI2, 6, [0, dpi >> 8, dpi & 255, y >> 8, y & 255, (d.dpi2 && d.dpi2.lod) || 0]);
+      await sleep(50);
+      got = (await this.req(idx, d.f.DPI2, 5, [0])).readUInt16BE(1);
+    }
+    if (got !== dpi) throw new Error('Мышь не приняла DPI (прочитано ' + got + ')');
     return this.refresh();
   }
 
-  async setRate(idx, ms) {
+  async setRate(idx, hz) {
     const d = this._find(idx);
-    if (!d.f.RATE) throw new Error('Мышь не поддерживает смену частоты');
+    if (!d.f.RATE && !d.f.RATE2) throw new Error('Мышь не поддерживает смену частоты');
     const cur = this.state.devices.find((x) => x.idx === idx);
-    if (!cur || !cur.rate || !cur.rate.supported.includes(ms)) throw new Error('Недопустимая частота');
-    this.log('TX', `частота ${idx} -> ${ms} мс`);
-    await this.req(idx, d.f.RATE, 2, [ms]);
-    await sleep(50);
-    const now = (await this.req(idx, d.f.RATE, 1))[0];
-    if (now !== ms) throw new Error('Мышь не приняла частоту (прочитано ' + now + ' мс)');
+    if (!cur || !cur.rate || !cur.rate.supported.includes(hz)) throw new Error('Недопустимая частота');
+    await this._hostMode(d);
+    this.log('TX', `частота ${idx} -> ${hz} Гц`);
+    let got;
+    if (d.f.RATE) {
+      const ms = Math.round(1000 / hz);
+      await this.req(idx, d.f.RATE, 2, [ms]);
+      await sleep(50);
+      got = Math.round(1000 / (await this.req(idx, d.f.RATE, 1))[0]);
+    } else {
+      await this.req(idx, d.f.RATE2, 3, [RATE2_HZ.indexOf(hz)]);
+      await sleep(50);
+      got = RATE2_HZ[(await this.req(idx, d.f.RATE2, 2))[0]];
+    }
+    if (got !== hz) throw new Error('Мышь не приняла частоту (прочитано ' + got + ' Гц)');
     return this.refresh();
   }
 }
 
+function hasListEnd(b) {
+  for (let i = 0; i + 1 < b.length; i += 2) if (!b.readUInt16BE(i)) return true;
+  return false;
+}
+
 /** список DPI: BE16-значения до нуля; 0xE000|шаг означает «от предыдущего до следующего с шагом» */
-function decodeDpiList(r) {
+function decodeDpiList(r, offset = 1) {
   const vals = [];
-  for (let i = 1; i + 1 < r.length; i += 2) {
+  for (let i = offset; i + 1 < r.length; i += 2) {
     const v = r.readUInt16BE(i);
     if (!v) break;
     vals.push(v);

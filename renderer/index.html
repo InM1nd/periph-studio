@@ -401,10 +401,12 @@
     <section class="tab" id="tab-mouse">
       <header class="page-head">
         <h1 id="msName">Мышь</h1>
-        <p id="msSub">Logitech · HID++</p>
+        <p id="msSub">—</p>
+        <div class="seg ms-pick" id="msPick" hidden></div>
       </header>
 
-      <div class="notice">Если запущен Logitech G HUB, он может перезаписывать DPI и частоту своими значениями — закройте его, пока настраиваете мышь здесь. Изменения уходят в мышь только по кнопкам «Применить».</div>
+      <div class="notice">Программы производителя (Logitech G HUB, Razer Synapse) могут перезаписывать DPI и частоту своими значениями — закройте их, пока настраиваете мышь здесь. Изменения уходят в мышь только по кнопкам «Применить».</div>
+      <div class="notice" id="msOnboard" hidden>У мыши включены встроенные профили. При первом «Применить» приложение переключит её в режим управления с компьютера, иначе мышь игнорирует новые DPI и частоту. Вернуть профили можно в G HUB.</div>
 
       <div class="grid">
         <div class="card">
@@ -418,7 +420,7 @@
           <button class="ghost small ms-refresh" id="msRefresh">Перечитать</button>
         </div>
 
-        <div class="card controls">
+        <div class="card controls" id="msDpiCard">
           <h3>Чувствительность (DPI)</h3>
           <div class="ctl">
             <label>DPI <em id="msDpiVal">—</em></label>
@@ -433,7 +435,7 @@
           <p class="muted small-note" id="msDpiNow"></p>
         </div>
 
-        <div class="card wide">
+        <div class="card wide" id="msRateCard">
           <h3>Частота опроса</h3>
           <div class="seg" id="msRate"></div>
           <div><button class="btn-primary ms-rate-apply" id="msRateApply" disabled>Применить частоту</button></div>

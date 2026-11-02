@@ -234,13 +234,13 @@
     if (SX.conn.connected) out.push({ tab: 'sonix', icon: 'keyboard', name: SX.conn.name, sub: 'Sonix · подсветка', state: 'ok' });
     if (KT.conn.connected) out.push({ tab: 'kt87', icon: 'keyboard', name: 'KT87', sub: 'Winbond · подсветка', state: 'ok' });
     if (viaDevice()) out.push({ tab: 'via', icon: 'keyboard', name: viaDevice().name, sub: 'QMK · VIA', state: 'ok' });
-    if (msDevice()) {
-      const d = msDevice();
+    (MS.state.devices || []).forEach((d) => {
       const b = d.battery;
       const bat = !b ? '' : b.percent ? `${b.percent} %` : b.level ? LEVEL_NAMES[b.level] : '';
       const chg = b && b.charging === 'charging' ? ' · заряжается' : '';
-      out.push({ tab: 'mouse', icon: 'mouse', name: d.name, sub: d.online ? (bat ? 'заряд ' + bat + chg : 'Logitech') : 'спит — пошевелите', state: !d.online ? 'idle' : b && b.level === 'critical' && !chg ? 'warn' : 'ok' });
-    }
+      const brand = d.src === 'razer' ? 'Razer' : 'Logitech';
+      out.push({ tab: 'mouse', mouse: d.id, icon: 'mouse', name: d.name, sub: d.online ? (bat ? 'заряд ' + bat + chg : brand) : 'спит — пошевелите', state: !d.online ? 'idle' : b && b.level === 'critical' && !chg ? 'warn' : 'ok' });
+    });
     return out;
   }
 
@@ -257,7 +257,10 @@
       $('b', b).textContent = e.name;
       $('small', b).textContent = e.sub;
       b.title = e.name + ' — ' + e.sub;
-      b.addEventListener('click', () => { const n = $(`.nav-item[data-tab=${e.tab}]`); if (n && !n.hidden) n.click(); });
+      b.addEventListener('click', () => {
+        if (e.mouse) { MS.sel = e.mouse; MS.dpi = null; MS.rate = null; renderMouse(); }
+        const n = $(`.nav-item[data-tab=${e.tab}]`); if (n && !n.hidden) n.click();
+      });
       box.appendChild(b);
     });
   }
@@ -796,6 +799,7 @@
     royuan: { tab: 'overview', label: 'Keydous / Royuan', caps: ['подсветка', 'частота', 'раскладка'] },
     b23c: { tab: 'kt87', label: 'Winbond', caps: ['подсветка'] },
     logitech: { tab: 'mouse', label: 'Logitech', caps: ['DPI', 'частота', 'заряд'] },
+    razer: { tab: 'mouse', label: 'Razer', caps: ['DPI', 'частота', 'заряд'] },
     via: { tab: 'via', label: 'QMK / VIA', caps: ['подсветка'] },
     sonix: { tab: 'sonix', label: 'Sonix', caps: ['подсветка'] },
   };
@@ -939,31 +943,57 @@
     renderVia();
   }
 
-  /* ===================== мышь Logitech ===================== */
+  /* ===================== мыши: Logitech и Razer ===================== */
   const LEVEL_NAMES = { critical: 'критический', low: 'низкий', good: 'хороший', full: 'полный' };
   const CHARGE_NAMES = { discharging: 'от батареи', charging: 'заряжается', full: 'заряжена', error: 'ошибка зарядки', unknown: '—' };
   const DPI_PRESETS = [400, 800, 1600, 3200];
-  const MS = { state: { connected: false, devices: [] }, dpi: null, rate: null, busy: false };
+  const MS = { state: { devices: [] }, sel: null, dpi: null, rate: null, busy: false };
 
-  const msDevice = () => (MS.state.devices || []).find((d) => d.online) || (MS.state.devices || [])[0] || null;
+  const msDevice = () => {
+    const list = MS.state.devices || [];
+    return list.find((d) => d.id === MS.sel) || list.find((d) => d.online) || list[0] || null;
+  };
+
+  function mouseSub(d) {
+    if (!d.online) return 'Мышь не отвечает — пошевелите её, чтобы разбудить';
+    if (d.src === 'razer') return 'Razer';
+    // индекс 0xFF — устройство подключено напрямую, без приёмника
+    return d.idx === 0xff ? 'Logitech · по кабелю' : 'Logitech · через приёмник';
+  }
 
   function renderMouse() {
+    const list = MS.state.devices || [];
     const d = msDevice();
     $('#msNav').hidden = !d;
     updateNavSep();
     if (!d) { if ($('#msNav').classList.contains('active')) $('[data-tab=devices]').click(); return; }
+    if (MS.sel !== d.id) { MS.sel = d.id; MS.dpi = null; MS.rate = null; }
+    // несколько мышей — переключатель
+    const pick = $('#msPick');
+    pick.hidden = list.length < 2;
+    if (list.length > 1) {
+      pick.innerHTML = '';
+      list.forEach((m) => {
+        const b = document.createElement('button');
+        b.dataset.id = m.id;
+        b.textContent = m.name;
+        b.classList.toggle('on', m.id === d.id);
+        pick.appendChild(b);
+      });
+    }
     $('#msName').textContent = d.name;
-    // индекс 0xFF — устройство подключено напрямую, без приёмника
-    $('#msSub').textContent = !d.online ? 'Мышь не отвечает — пошевелите её, чтобы разбудить' : d.idx === 0xff ? 'Logitech · по кабелю' : 'Logitech · через приёмник';
+    $('#msSub').textContent = mouseSub(d);
     $('#msModel').textContent = d.name;
-    $('#msProto').textContent = 'HID++ ' + d.protocol;
+    $('#msProto').textContent = d.src === 'razer' ? `Razer · прошивка ${d.firmware || '—'}` : 'HID++ ' + d.protocol;
     const b = d.battery;
     const bat = $('#msBat');
     bat.className = b && b.level ? 'bat-' + b.level : '';
-    bat.textContent = !b ? '—' : (b.percent ? b.percent + ' %' : '') + (b.level ? (b.percent ? ' · ' : '') + LEVEL_NAMES[b.level] : '');
+    bat.textContent = !b ? 'нет данных (проводная?)' : (b.percent ? (b.approx ? '≈ ' : '') + b.percent + ' %' : '') + (b.level ? (b.percent ? ' · ' : '') + LEVEL_NAMES[b.level] : '');
     $('#msCharge').textContent = b ? CHARGE_NAMES[b.charging] || '—' : '—';
+    $('#msOnboard').hidden = !d.onboard;
 
     const dpi = d.dpi;
+    $('#msDpiCard').hidden = !dpi;
     if (dpi) {
       if (MS.dpi === null) MS.dpi = dpi.value;
       const r = $('#msDpi');
@@ -973,22 +1003,23 @@
       $('#msDpiMin').textContent = String(dpi.min);
       $('#msDpiMax').textContent = String(dpi.max);
       if (document.activeElement !== $('#msDpiInput')) $('#msDpiInput').value = String(MS.dpi);
-      $('#msDpiNow').textContent = `Сейчас в мыши: ${dpi.value} · заводское: ${dpi.def}`;
+      $('#msDpiNow').textContent = `Сейчас в мыши: ${dpi.value}` + (dpi.def ? ` · заводское: ${dpi.def}` : '');
       $('#msDpiApply').disabled = MS.busy || !d.online || MS.dpi === dpi.value;
     }
     const rate = d.rate;
+    $('#msRateCard').hidden = !rate;
     if (rate) {
-      if (MS.rate === null) MS.rate = rate.ms;
+      if (MS.rate === null) MS.rate = rate.hz;
       const seg = $('#msRate');
       seg.innerHTML = '';
-      rate.supported.slice().sort((a, b2) => b2 - a).forEach((ms) => {
+      rate.supported.slice().sort((a, b2) => a - b2).forEach((hz) => {
         const btn = document.createElement('button');
-        btn.dataset.ms = String(ms);
-        btn.textContent = Math.round(1000 / ms) + ' Гц' + (ms === rate.ms ? ' · сейчас' : '');
-        btn.classList.toggle('on', ms === MS.rate);
+        btn.dataset.hz = String(hz);
+        btn.textContent = hz + ' Гц' + (hz === rate.hz ? ' · сейчас' : '');
+        btn.classList.toggle('on', hz === MS.rate);
         seg.appendChild(btn);
       });
-      $('#msRateApply').disabled = MS.busy || !d.online || MS.rate === rate.ms;
+      $('#msRateApply').disabled = MS.busy || !d.online || MS.rate === rate.hz;
     }
   }
 
@@ -1017,14 +1048,15 @@
     $('#msPresets').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { MS.dpi = snapDpi(Number(b.dataset.v)); renderMouse(); } });
     $('#msDpi').addEventListener('input', (e) => { MS.dpi = snapDpi(Number(e.target.value)); renderMouse(); });
     $('#msDpiInput').addEventListener('change', (e) => { const v = parseInt(e.target.value, 10); if (v) MS.dpi = snapDpi(v); e.target.value = String(MS.dpi); renderMouse(); });
-    $('#msRate').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { MS.rate = Number(b.dataset.ms); renderMouse(); } });
+    $('#msRate').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { MS.rate = Number(b.dataset.hz); renderMouse(); } });
+    $('#msPick').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { MS.sel = b.dataset.id; MS.dpi = null; MS.rate = null; renderMouse(); } });
     $('#msDpiApply').addEventListener('click', () => {
       const d = msDevice();
-      msApply(() => window.kb.mouse.setDpi(d.idx, MS.dpi), `DPI: ${MS.dpi}`);
+      msApply(() => window.kb.mouse.setDpi(d.id, MS.dpi), `DPI: ${MS.dpi}`);
     });
     $('#msRateApply').addEventListener('click', () => {
       const d = msDevice();
-      msApply(() => window.kb.mouse.setRate(d.idx, MS.rate), `Частота опроса: ${Math.round(1000 / MS.rate)} Гц`);
+      msApply(() => window.kb.mouse.setRate(d.id, MS.rate), `Частота опроса: ${MS.rate} Гц`);
     });
     $('#msRefresh').addEventListener('click', () => {
       MS.dpi = null; MS.rate = null;

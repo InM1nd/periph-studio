@@ -1,0 +1,41 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check version against tag
+        run: node -e "if (process.env.GITHUB_REF_NAME !== 'v' + require('./package.json').version) throw new Error('Tag must match package.json version');"
+      - run: npm ci
+      - run: npm test
+      - run: npm run zip
+      - name: Publish portable archive and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $archive = "dist/Periph-Studio-$version-Windows-x64.zip"
+          $checksum = "$archive.sha256"
+          if (!(Test-Path -LiteralPath $archive) -or !(Test-Path -LiteralPath $checksum)) { throw 'Missing release artifacts' }
+          gh release view $env:GITHUB_REF_NAME --json tagName
+          if ($LASTEXITCODE -eq 0) { throw 'Release already exists; use a new version tag' }
+          gh release create $env:GITHUB_REF_NAME $archive $checksum --verify-tag --title "Periph Studio $version" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish release' }

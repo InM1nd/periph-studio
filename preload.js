@@ -3,6 +3,33 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const call = (method, ...args) => ipcRenderer.invoke('kb:call', method, ...args);
 
+contextBridge.exposeInMainWorld('windowFrame', {
+  getState: () => ipcRenderer.invoke('window:state'),
+  onState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('window:state', listener);
+    return () => ipcRenderer.removeListener('window:state', listener);
+  },
+});
+
+contextBridge.exposeInMainWorld('updates', {
+  getState: () => ipcRenderer.invoke('updates:state'),
+  check: () => ipcRenderer.invoke('updates:check'),
+  download: () => ipcRenderer.invoke('updates:download'),
+  install: () => ipcRenderer.invoke('updates:install'),
+  startupReady: () => ipcRenderer.invoke('updates:startupReady'),
+  cancel: () => ipcRenderer.invoke('updates:cancel'),
+  open: () => ipcRenderer.invoke('updates:open'),
+  showFile: () => ipcRenderer.invoke('updates:showFile'),
+  releases: () => ipcRenderer.invoke('updates:releases'),
+  onShowSettings: (cb) => ipcRenderer.on('updates:showSettings', cb),
+  onState: (cb) => {
+    const listener = (_event, state) => cb(state);
+    ipcRenderer.on('updates:state', listener);
+    return () => ipcRenderer.removeListener('updates:state', listener);
+  },
+});
+
 contextBridge.exposeInMainWorld('kb', {
   getState: () => ipcRenderer.invoke('kb:state'),
   getModes: () => ipcRenderer.invoke('kb:modes'),

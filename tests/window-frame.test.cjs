@@ -1,0 +1,33 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { watchFrame, stateOf } = require('../window-frame');
+
+test('native window focus, maximize and fullscreen transitions reach the renderer', () => {
+  const win = new EventEmitter();
+  win.webContents = new EventEmitter();
+  let focused = true, maximized = false, fullscreen = false, destroyed = false;
+  win.isFocused = () => focused;
+  win.isMaximized = () => maximized;
+  win.isFullScreen = () => fullscreen;
+  win.isDestroyed = () => destroyed;
+  const overlays = [], states = [];
+  win.setTitleBarOverlay = (style) => overlays.push(style);
+  watchFrame(win, (state) => states.push(state), 'win32');
+  win.webContents.emit('did-finish-load');
+  assert.deepEqual(states.at(-1), { focused: true, maximized: false, fullscreen: false });
+  focused = false; win.emit('blur');
+  assert.equal(states.at(-1).focused, false);
+  assert.equal(overlays.at(-1).symbolColor, '#72727c');
+  focused = true; win.emit('focus');
+  assert.equal(overlays.at(-1).symbolColor, '#b4b4bd');
+  maximized = true; win.emit('maximize');
+  assert.equal(states.at(-1).maximized, true);
+  fullscreen = true; win.emit('enter-full-screen');
+  assert.equal(states.at(-1).fullscreen, true);
+  fullscreen = false; maximized = false; win.emit('unmaximize');
+  assert.deepEqual(stateOf(win), { focused: true, maximized: false, fullscreen: false });
+  const count = states.length;
+  destroyed = true; win.emit('blur');
+  assert.equal(states.length, count, 'closed windows must not send IPC updates');
+});

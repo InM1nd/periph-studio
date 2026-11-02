@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, net, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -11,6 +11,11 @@ const { Via } = require('./via');
 const { Sonix, SONIX_MODELS } = require('./sonix');
 const { Razer } = require('./razer');
 const ROYUAN = require('./profiles/royuan.json');
+const { PortableUpdates, RELEASES_URL } = require('./updates');
+const { PortableInstaller } = require('./portable-installer');
+const { frameOptions, stateOf, watchFrame } = require('./window-frame');
+
+if (!app.requestSingleInstanceLock()) app.exit(0);
 
 const kb = new Keyboard();
 const kt = new Kt87();
@@ -19,6 +24,10 @@ const via = new Via();
 const sx = new Sonix();
 const rz = new Razer();
 let win = null;
+let updates = null;
+let installer = null;
+let deviceOperations = 0;
+app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 const ALLOWED = new Set([
   'readInfo', 'readLight', 'readKeymap',
@@ -26,12 +35,14 @@ const ALLOWED = new Set([
 ]);
 
 function createWindow() {
+  nativeTheme.themeSource = 'dark';
   win = new BrowserWindow({
-    width: 1220,
-    height: 800,
+    ...frameOptions(),
+    width: 1440,
+    height: 940,
     minWidth: 1000,
     minHeight: 660,
-    backgroundColor: '#0c0e13',
+    backgroundColor: '#0b0b0c',
     title: 'Periph Studio',
     icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
@@ -41,25 +52,68 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  win.setMenu(null);
+  const framedWindow = win;
+  watchFrame(framedWindow, (state) => { if (!framedWindow.isDestroyed()) framedWindow.webContents.send('window:state', state); });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.on('closed', () => { win = null; });
 }
 
+ipcMain.handle('window:state', (event) => {
+  if (!win || event.sender !== win.webContents) throw new Error('Unknown application window');
+  return stateOf(win);
+});
+
 const send = (ch, v) => { if (win) win.webContents.send(ch, v); };
-const wrap = (fn) => async (_e, ...args) => {
+const plainWrap = (fn) => async (_e, ...args) => {
   try { return { ok: true, data: await fn(...args) }; } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
 };
+const updating = () => ['preparing', 'installing'].includes(updates?.getState().status);
+const wrap = (fn) => plainWrap(async (...args) => {
+  if (updating()) throw new Error('Приложение готовится к обновлению. Дождитесь перезапуска.');
+  deviceOperations++;
+  try { return await fn(...args); } finally { deviceOperations--; }
+});
+
+/* Updates use only this repository's release assets. The renderer supplies no URLs or paths. */
+ipcMain.handle('updates:state', () => updates?.getState());
+ipcMain.handle('updates:check', plainWrap(() => updates.check()));
+ipcMain.handle('updates:download', plainWrap(() => updates.download()));
+ipcMain.handle('updates:install', plainWrap(() => {
+  if (deviceOperations) throw new Error('Дождитесь завершения обмена с устройством и повторите установку.');
+  return updates.install();
+}));
+ipcMain.handle('updates:cancel', () => updates.cancel());
+ipcMain.handle('updates:open', plainWrap(() => updates.open()));
+ipcMain.handle('updates:showFile', plainWrap(() => updates.showFile()));
+ipcMain.handle('updates:releases', plainWrap(() => shell.openExternal(RELEASES_URL)));
+ipcMain.handle('updates:startupReady', plainWrap(async () => {
+  const success = process.argv.find((arg) => arg.startsWith('--periph-update-token='))?.split('=')[1];
+  const failed = process.argv.find((arg) => arg.startsWith('--periph-update-failed-token='))?.split('=')[1];
+  if (success && await installer.acknowledge(success)) {
+    updates.setState({ status: 'installed', message: `Обновление установлено. Вы используете версию ${app.getVersion()}.` });
+    send('updates:showSettings');
+  } else if (failed) {
+    const result = await installer.outcome(failed);
+    if (result) {
+      updates.setState({ status: 'error', message: 'Обновление не удалось установить. Предыдущая версия восстановлена. Можно повторить проверку обновлений.' });
+      send('updates:showSettings');
+    }
+  }
+}));
 
 /* ---------- Royuan (NJ80 и семейство yc200) ---------- */
 ipcMain.handle('kb:call', async (_e, method, ...args) => {
   if (!ALLOWED.has(method)) throw new Error('Недопустимая команда: ' + method);
+  if (updating()) return { ok: false, error: 'Приложение готовится к обновлению. Дождитесь перезапуска.' };
+  deviceOperations++;
   try {
     return { ok: true, data: await kb[method](...args) };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
-  }
+  } finally { deviceOperations--; }
 });
 ipcMain.handle('kb:state', () => kb.state);
 ipcMain.handle('kb:modes', () => MODES);
@@ -206,6 +260,19 @@ ipcMain.handle('devices:report', wrap(async (id) => {
 }));
 
 app.whenReady().then(() => {
+  installer = new PortableInstaller({
+    installDir: path.dirname(process.execPath), userData: app.getPath('userData'), currentVersion: app.getVersion(),
+    protectedPaths: ['home', 'desktop', 'documents', 'downloads', 'appData', 'userData'].map((name) => app.getPath(name)).concat([process.env.SystemRoot, process.env.ProgramFiles, process.env['ProgramFiles(x86)']]),
+  });
+  updates = new PortableUpdates({
+    currentVersion: app.getVersion(), userData: app.getPath('userData'),
+    fetch: (url, options) => net.fetch(url, options),
+    supported: app.isPackaged && process.platform === 'win32' && process.arch === 'x64',
+    openArchive: (file) => shell.openPath(file), reveal: (file) => shell.showItemInFolder(file),
+    installUpdate: async (release) => { const job = await installer.prepare(release); await installer.handoff(job); },
+    quitForUpdate: () => { setTimeout(() => app.quit(), 100); },
+  });
+  updates.on('state', (state) => send('updates:state', state));
   try { migrateBackups(); } catch (e) { console.error('migrateBackups', e); }
   createWindow();
   kb.start();
@@ -217,12 +284,12 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('window-all-closed', () => {
+app.on('before-quit', () => {
   kb.stop();
   kt.stop();
   lg.stop();
   via.stop();
   sx.stop();
   rz.stop();
-  if (process.platform !== 'darwin') app.quit();
 });
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

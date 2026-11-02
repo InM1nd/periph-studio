@@ -13,6 +13,13 @@
     const n = parseInt(m[1], 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   };
+  function refreshRangeTracks() {
+    $$('input[type="range"]').forEach((input) => {
+      const min = Number(input.min || 0), max = Number(input.max || 100);
+      input.style.setProperty('--range-progress', `${max > min ? Math.max(0, Math.min(100, (Number(input.value) - min) / (max - min) * 100)) : 0}%`);
+    });
+  }
+  document.addEventListener('input', (e) => { if (e.target.matches('input[type="range"]')) refreshRangeTracks(); });
 
   let toastTimer = null;
   function toast(msg, isErr = false) {
@@ -177,6 +184,10 @@
     els.push({ el: knob, idx: KNOB.press, x: maxX + 0.5, label: 'Ручка', knob: true });
     container.style.width = (maxX + 0.5) * U + U * 1.25 + 'px';
     container.style.height = ROWS.length * U + 'px';
+    const naturalWidth = (maxX + 0.5) * U + U * 1.25;
+    const resize = () => { container.style.zoom = String(Math.min(1, container.parentElement.clientWidth / naturalWidth)); };
+    new ResizeObserver(resize).observe(container.parentElement);
+    resize();
     return els;
   }
 
@@ -192,7 +203,6 @@
     backup: null,
     loaded: false,
     applying: false,
-    dirty: false,
     selected: -1,
   };
   let lightBoard = [];
@@ -213,6 +223,7 @@
     // режимы подсветки, которые есть у этой модели
     $$('#modeGrid .mode').forEach((b) => { b.hidden = !!(m && m.modes && !m.modes.includes(b.dataset.key)); });
     renderSideDevices();
+    syncLightControls();
   }
 
   /* ===================== подключённые устройства (боковая панель) ===================== */
@@ -226,7 +237,7 @@
     const c = S.conn;
     if (c.connected) {
       const m = c.model;
-      out.push({ tab: 'overview', icon: 'keyboard', name: m ? m.name : 'Keydous', sub: m && !m.writable ? 'только чтение' : 'Keydous · Royuan', state: m && !m.writable ? 'warn' : 'ok' });
+      out.push({ tab: 'overview', icon: 'keyboard', name: m ? m.name : 'Keydous', sub: m && !m.writable ? 'Только чтение' : S.info?.is24 ? '2.4G · Подключено' : 'USB · Подключено', state: m && !m.writable ? 'warn' : 'ok' });
     } else if (c.reason === 'noanswer' || c.reason === 'lost') {
       out.push({ tab: 'devices', icon: 'keyboard', name: 'Keydous / Royuan', sub: c.reason === 'lost' ? 'связь потеряна' : 'нет ответа — закройте Keydous Driver', state: 'err' });
     }
@@ -248,11 +259,13 @@
     const list = sideEntries();
     const box = $('#sideDevList');
     $('#sideDevCount').textContent = list.length ? String(list.length) : '';
-    if (!list.length) { box.innerHTML = '<div class="sdev-empty">Нет подключённых устройств</div>'; return; }
+    if (!list.length) { box.innerHTML = '<div class="sdev-empty">Нет подключённых устройств</div>'; syncWorkspace(); return; }
     box.innerHTML = '';
     list.forEach((e) => {
       const b = document.createElement('button');
       b.className = 'sdev';
+      b.dataset.tab = e.tab;
+      if (e.mouse) b.dataset.mouse = e.mouse;
       b.innerHTML = `<span class="sdev-ico">${ICON[e.icon]}</span><span class="sdev-txt"><b></b><small></small></span><span class="dot ${e.state}"></span>`;
       $('b', b).textContent = e.name;
       $('small', b).textContent = e.sub;
@@ -263,20 +276,32 @@
       });
       box.appendChild(b);
     });
+    syncWorkspace();
   }
 
   async function loadAll() {
+    const session = lightSession;
     S.loaded = true;
     try {
-      S.info = await api(window.kb.readInfo);
+      const info = await api(window.kb.readInfo);
+      if (session !== lightSession) return;
+      S.info = info;
       renderOverview();
-      S.light = await api(window.kb.readLight);
+      renderSideDevices();
+      const light = await api(window.kb.readLight);
+      if (session !== lightSession) return;
+      S.light = light;
       initLightControls();
       if (!S.conn.model || !S.conn.model.keymap) return; // схема клавиш есть только для NJ80
-      setKeymap(await api(window.kb.readKeymap));
-      S.backup = await api(window.kb.backupInfo);
+      const keymap = await api(window.kb.readKeymap);
+      if (session !== lightSession) return;
+      setKeymap(keymap);
+      const backup = await api(window.kb.backupInfo);
+      if (session !== lightSession) return;
+      S.backup = backup;
       renderKeys();
     } catch (e) {
+      if (session !== lightSession) return;
       S.loaded = false;
       toast('Не удалось прочитать данные: ' + e.message, true);
     }
@@ -339,19 +364,48 @@
   }
 
   /* ===================== подсветка ===================== */
-  const L = { mode: 'alwaysOn', brightness: 4, speed: 2, rgb: [255, 183, 102], dazzle: false, option: undefined };
-  let applyTimer = null;
+  const L = { mode: 'alwaysOn', brightness: 4, speed: 2, rgb: [255, 255, 255], dazzle: false, option: undefined };
+  let appliedLight = null;
+  let lightSession = 0;
+  let expandedEffects = false;
+  const lightSnapshot = () => ({ ...L, rgb: [...L.rgb] });
+  const lightWritable = () => S.conn.connected && S.conn.model?.writable !== false && !!appliedLight;
+  const lightChanged = () => !!appliedLight && JSON.stringify(lightSnapshot()) !== JSON.stringify(appliedLight);
+
+  function renderLightSaveBar() {
+    const changed = lightChanged();
+    $('#lightSaveBar').classList.toggle('dirty', changed);
+    $('#lightSaveText').textContent = S.applying ? 'Применяю…' : !S.conn.connected ? 'Клавиатура не подключена' : !lightWritable() ? 'Настройка недоступна' : changed ? 'Есть изменения' : 'Изменений нет';
+    $('#lightApply').disabled = !lightWritable() || !changed || S.applying;
+    $('#lightDiscard').disabled = !changed || S.applying || !lightWritable();
+  }
+
+  const EFFECT_ICONS = {
+    off: '<circle cx="16" cy="12" r="9"/><path d="m9 19 14-14"/>',
+    alwaysOn: '<path d="M4 12h24"/>',
+    breath: '<path d="M3 13q6-12 13 0t13 0"/>',
+    wave: '<path d="M3 8q6-8 13 0t13 0M3 15q6-8 13 0t13 0"/>',
+    ripple: '<circle cx="16" cy="12" r="3"/><circle cx="16" cy="12" r="7"/><circle cx="16" cy="12" r="11"/>',
+    neon: '<path d="m3 12 6 0 4-9 6 18 4-9h6"/>',
+  };
 
   function modeInfo() { return S.modes.find((m) => m.key === L.mode) || {}; }
 
   function buildModeGrid() {
     const g = $('#modeGrid');
     g.innerHTML = '';
-    S.modes.forEach((m) => {
+    const favorites = ['alwaysOn', 'breath', 'wave', 'ripple', 'neon', 'off'];
+    const modes = [...S.modes].sort((a, b) => {
+      const order = (m) => favorites.includes(m.key) ? favorites.indexOf(m.key) : 99;
+      return order(a) - order(b);
+    });
+    modes.forEach((m) => {
       const b = document.createElement('button');
       b.className = 'mode';
       b.dataset.key = m.key;
-      b.textContent = MODE_NAMES[m.key] || m.key;
+      b.dataset.favorite = String(favorites.includes(m.key));
+      b.innerHTML = `<span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 32 24">${EFFECT_ICONS[m.key] || '<path d="M4 17 11 7l7 10 10-10"/>'}</svg></span><span></span>`;
+      $('span:last-child', b).textContent = MODE_NAMES[m.key] || m.key;
       g.appendChild(b);
     });
     g.addEventListener('click', (e) => {
@@ -366,7 +420,9 @@
     const sw = $('#swatches');
     sw.innerHTML = '';
     SWATCHES.forEach((c) => {
-      const d = document.createElement('div');
+      const d = document.createElement('button');
+      d.type = 'button';
+      d.setAttribute('aria-label', 'Цвет подсветки ' + c);
       d.className = 'swatch';
       d.style.background = c;
       d.dataset.c = c;
@@ -384,7 +440,15 @@
 
   function syncLightControls() {
     const m = modeInfo();
-    $$('#modeGrid .mode').forEach((b) => b.classList.toggle('on', b.dataset.key === L.mode));
+    const available = S.conn.model?.modes;
+    $$('#modeGrid .mode').forEach((b) => {
+      b.classList.toggle('on', b.dataset.key === L.mode);
+      b.setAttribute('aria-pressed', String(b.dataset.key === L.mode));
+      b.hidden = !!(available && !available.includes(b.dataset.key)) || (!expandedEffects && b.dataset.favorite !== 'true' && b.dataset.key !== L.mode);
+      b.disabled = !lightWritable() || S.applying;
+    });
+    $('#allEffects').textContent = expandedEffects ? 'Свернуть' : 'Все эффекты';
+    $('#allEffects').setAttribute('aria-expanded', String(expandedEffects));
 
     const hx = rgbToHex(L.rgb);
     $('#colorInput').value = hx;
@@ -402,6 +466,12 @@
     $('#ctlBright').classList.toggle('dim', L.mode === 'off');
     $('#ctlSpeed').classList.toggle('dim', !m.speed);
     $('#ctlOption').hidden = !m.options;
+    const busy = !lightWritable() || S.applying;
+    $('#colorInput').disabled = $('#colorHex').disabled = busy || !m.rgb || L.dazzle;
+    $$('#swatches button').forEach((b) => { b.disabled = busy || !m.rgb || L.dazzle; });
+    $('#rainbow').disabled = busy || !m.dazzle;
+    $('#bright').disabled = busy || L.mode === 'off';
+    $('#speed').disabled = busy || !m.speed;
     if (m.options) {
       const seg = $('#optionSeg');
       seg.innerHTML = '';
@@ -410,10 +480,13 @@
         b.dataset.o = o;
         b.textContent = OPTION_NAMES[o] || o;
         b.classList.toggle('on', o === L.option);
+        b.disabled = busy;
         seg.appendChild(b);
       });
     }
     updateLightPreview();
+    renderLightSaveBar();
+    refreshRangeTracks();
   }
 
   function initLightControls() {
@@ -428,10 +501,18 @@
     }
     const m = modeInfo();
     if (m.options && !m.options.includes(L.option)) L.option = m.options[0];
+    appliedLight = lightSnapshot();
     syncLightControls();
   }
 
   function wireLight() {
+    $('#allEffects').addEventListener('click', () => { expandedEffects = !expandedEffects; syncLightControls(); });
+    $('#lightApply').addEventListener('click', doApply);
+    $('#lightDiscard').addEventListener('click', () => {
+      if (!appliedLight || S.applying) return;
+      Object.assign(L, appliedLight, { rgb: [...appliedLight.rgb] });
+      syncLightControls();
+    });
     $('#colorInput').addEventListener('input', (e) => { L.rgb = hexToRgb(e.target.value) || L.rgb; L.dazzle = false; syncLightControls(); scheduleApply(); });
     $('#colorHex').addEventListener('input', (e) => {
       const rgb = hexToRgb(e.target.value);
@@ -451,21 +532,27 @@
   }
 
   function scheduleApply() {
-    clearTimeout(applyTimer);
-    applyTimer = setTimeout(doApply, 320);
+    // Draft only. Hardware writes happen exclusively through the Apply button.
+    renderLightSaveBar();
   }
   async function doApply() {
-    if (!S.conn.connected) { toast('Клавиатура не подключена', true); return; }
-    if (S.applying) { S.dirty = true; return; }
+    if (!lightWritable() || !lightChanged() || S.applying) return;
+    const session = lightSession;
+    const draft = lightSnapshot();
     S.applying = true;
+    syncLightControls();
     try {
-      await api(window.kb.setLight, { ...L });
-      toast('Подсветка применена');
+      await api(window.kb.setLight, draft);
+      if (session === lightSession) {
+        appliedLight = draft;
+        S.light = draft;
+        toast('Подсветка применена');
+      }
     } catch (e) {
       toast('Не удалось применить: ' + e.message, true);
     } finally {
       S.applying = false;
-      if (S.dirty) { S.dirty = false; doApply(); }
+      syncLightControls();
     }
   }
 
@@ -1068,12 +1155,48 @@
   }
 
   /* ===================== вкладки, журнал ===================== */
+  function syncWorkspace() {
+    const tab = $('.tab.active')?.id.replace('tab-', '') || 'devices';
+    const family = ['overview', 'light', 'keys'].includes(tab) ? 'royuan' : tab;
+    document.body.dataset.workspace = family;
+    const devicePage = !['devices', 'settings'].includes(family);
+    $('#workspaceHead').hidden = !devicePage;
+    let name = '';
+    let tag = 'USB';
+    if (family === 'royuan') {
+      name = S.conn.model?.name || 'Keydous / Royuan';
+      if (S.info?.is24) tag = '2.4G';
+    } else if (family === 'mouse') {
+      const d = msDevice();
+      name = d?.name || 'Мышь';
+      tag = d?.online ? 'HID' : 'Сон';
+    } else if (family === 'kt87') name = KT.conn.product || 'KT87';
+    else if (family === 'sonix') name = SX.conn.name || 'Sonix';
+    else if (family === 'via') name = viaDevice()?.name || 'QMK / VIA';
+    $('#workspaceName').textContent = name;
+    $('#workspaceTag').textContent = tag;
+    $('#previewModel').textContent = S.conn.model?.name || 'Клавиатура';
+    $$('.sdev').forEach((b) => {
+      const bFamily = b.dataset.tab === 'overview' ? 'royuan' : b.dataset.tab;
+      const active = bFamily === family && (family !== 'mouse' || b.dataset.mouse === msDevice()?.id);
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+    $$('.nav-item').forEach((b) => {
+      if (b.classList.contains('active')) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
+    refreshRangeTracks();
+  }
+
   function wireNav() {
-    $('#nav').addEventListener('click', (e) => {
+    $('.app').addEventListener('click', (e) => {
       const b = e.target.closest('.nav-item');
       if (!b) return;
       $$('.nav-item').forEach((x) => x.classList.toggle('active', x === b));
       $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + b.dataset.tab));
+      syncWorkspace();
+      $('.main').scrollTop = 0;
     });
   }
 
@@ -1093,11 +1216,12 @@
 
   /* ===================== запуск ===================== */
   async function init() {
+    wireNav();
     S.modes = await window.kb.getModes();
     lightBoard = buildBoard($('#lightBoard'), { interactive: false });
     keyBoard = buildBoard($('#keyBoard'), { interactive: true });
     buildModeGrid();
-    wireNav(); wireOverview(); wireLight(); wireKeys(); wireLog();
+    wireOverview(); wireLight(); wireKeys(); wireLog();
     syncLightControls();
     await initKt87();
     await initMouse();
@@ -1106,7 +1230,9 @@
     initDevices();
 
     window.kb.onState((st) => {
+      if (S.conn.connected !== st.connected || S.conn.deviceId !== st.deviceId) lightSession++;
       S.conn = st;
+      if (!st.connected) { appliedLight = null; S.light = null; S.info = null; }
       renderConn();
       if (st.connected && !S.loaded) loadAll();
       if (!st.connected) S.loaded = false;
@@ -1117,5 +1243,17 @@
     if (S.conn.connected) loadAll();
   }
 
-  init();
+  window.prepareForUpdate = async () => {
+    if (S.writing || S.applying || MS.busy || KT.busy || SX.busy || V.busy) {
+      toast('Дождитесь завершения записи в устройство перед обновлением.', true);
+      return false;
+    }
+    const mouse = msDevice();
+    const mouseDraft = (mouse?.dpi && MS.dpi !== null && MS.dpi !== mouse.dpi.value) || (mouse?.rate && MS.rate !== null && MS.rate !== mouse.rate.hz);
+    if (lightChanged() || pendingIdx().length || mouseDraft) {
+      return confirmModal('Установить обновление?', 'Есть несохранённые изменения настроек устройства. При перезапуске они будут потеряны.', 'Установить и перезапустить');
+    }
+    return true;
+  };
+  init().then(() => window.updates?.startupReady?.()).catch((e) => toast('Не удалось запустить интерфейс: ' + e.message, true));
 })();

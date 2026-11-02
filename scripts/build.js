@@ -12,6 +12,9 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { createHash } = require('crypto');
+const { writeManifest } = require('./install-manifest');
+const { writeLauncher } = require('./build-launcher');
 
 const ROOT = path.join(__dirname, '..');
 const TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
@@ -78,7 +81,7 @@ async function build() {
     asar: { unpack: '**/*.node' }, // нативный модуль node-hid не может грузиться из asar
     prune: true,
     ignore: [
-      /^\/dist($|\/)/, /^\/scripts($|\/)/, /^\/tools($|\/)/, /^\/README/, /^\/backups($|\/)/,
+      /^\/dist($|\/)/, /^\/scripts($|\/)/, /^\/tools($|\/)/, /^\/tests($|\/)/, /^\/\.github($|\/)/, /^\/README/, /^\/backups($|\/)/,
       // node-hid: исходники и сборки под другие платформы не нужны
       /^\/node_modules\/node-hid\/(hidapi|src)($|\/)/,
       /^\/node_modules\/node-hid\/prebuilds\/(?!HID-win32-x64)/,
@@ -95,26 +98,32 @@ async function build() {
   // проверка: .node-файл должен лежать снаружи asar
   const unpacked = path.join(outDir, 'resources', 'app.asar.unpacked', 'node_modules', 'node-hid', 'prebuilds', 'HID-win32-x64');
   if (!fs.readdirSync(unpacked).some((f) => f.endsWith('.node'))) throw new Error('node-hid .node не найден в ' + unpacked);
+  writeLauncher(outDir);
+  await writeManifest(outDir, pkg.version);
   console.log('Готово:', exe);
 
   if (!process.argv.includes('--no-shortcut')) createShortcut(exe, icon);
-  if (process.argv.includes('--zip')) makeZip(outDir);
+  if (process.argv.includes('--zip')) await makeZip(outDir);
 }
 
 /** Архив для передачи: папка программы + инструкция «Как запустить.txt» в корне */
-function makeZip(outDir) {
+async function makeZip(outDir) {
   const dist = path.dirname(outDir);
   const stage = path.join(dist, '_zip');
   fs.rmSync(stage, { recursive: true, force: true });
   fs.mkdirSync(stage, { recursive: true });
   fs.copyFileSync(path.join(__dirname, 'readme-for-users.txt'), path.join(stage, 'Как запустить.txt'));
-  const zip = path.join(dist, `${pkg.productName} ${pkg.version} (Windows x64).zip`);
+  const zip = path.join(dist, `Periph-Studio-${pkg.version}-Windows-x64.zip`);
   fs.rmSync(zip, { force: true });
   // -a: формат по расширению (.zip); hdrcharset=UTF-8 — иначе русское имя файла пишется в OEM-кодировке
   // без флага UTF-8, и Проводник/другие архиваторы показывают его кракозябрами
   execFileSync(TAR, ['-a', '-c', '-f', zip, '--options', 'zip:hdrcharset=UTF-8', '-C', dist, path.basename(outDir), '-C', stage, 'Как запустить.txt'], { stdio: 'inherit' });
   fs.rmSync(stage, { recursive: true, force: true });
+  const hash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(zip)) hash.update(chunk);
+  fs.writeFileSync(zip + '.sha256', `${hash.digest('hex')}  ${path.basename(zip)}\n`);
   console.log('Архив:', zip, `(${(fs.statSync(zip).size / 1048576).toFixed(0)} МБ)`);
+  console.log('SHA-256:', zip + '.sha256');
 }
 
 (process.argv.includes('--dev') ? fixDevElectron() : build()).catch((e) => {

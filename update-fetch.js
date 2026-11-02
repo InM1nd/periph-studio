@@ -23,7 +23,8 @@ function createUpdateFetch(net) {
       if (!redirected) { incoming?.destroy(error); reject(error); }
       cleanup();
     });
-    request.once('close', cleanup);
+    // ClientRequest's writable side closes after end(), before the response.
+    // Keep cancellation subscribed until the response finishes.
     request.once('redirect', (status, method, destination) => {
       redirected = true;
       resolve(new Response(null, { status, headers: { location: destination } }));
@@ -38,6 +39,7 @@ function createUpdateFetch(net) {
       }
       response.once('aborted', () => response.destroy(new Error('Response interrupted')));
       response.once('end', cleanup);
+      response.once('close', cleanup);
       const empty = [204, 205, 304].includes(response.statusCode);
       const body = Readable.toWeb(response);
       resolve(new Response(empty ? null : body, { status: response.statusCode, headers: responseHeaders }));

@@ -9,7 +9,8 @@ app.setPath('userData', profile);
 const report = (value) => fs.writeFileSync(path.join(profile, 'result.json'), JSON.stringify(value));
 let phase = 'startup';
 const trace = [];
-const deadline = setTimeout(() => { report({error:'Electron integration timeout at ' + phase + ': ' + trace.join(', ')}); app.exit(1); }, 45000);
+const publicCheck = process.env.PERIPH_TEST_PUBLIC_UPDATE === '1';
+const deadline = setTimeout(() => { report({error:'Electron integration timeout at ' + phase + ': ' + trace.join(', ')}); app.exit(1); }, publicCheck ? 160000 : 45000);
 app.whenReady().then(async () => {
   const server = http.createServer((req, res) => {
     if (req.url === '/redirect') { res.writeHead(302, {location:'/archive'}); res.end(); }
@@ -44,6 +45,18 @@ app.whenReady().then(async () => {
     const slow = await fetcher(root + '/slow', {signal:controller.signal});
     const read = slow.text(); controller.abort();
     await assert.rejects(read);
+    if (publicCheck) {
+      phase = 'public release check';
+      const {PortableUpdates} = require('../../updates');
+      const updater = new PortableUpdates({currentVersion:'0.5.0',userData:profile,supported:true,fetch:fetcher});
+      const available = await updater.check();
+      assert.equal(available.status,'available',available.message);
+      assert.equal(available.version,require('../../package.json').version);
+      phase = 'public release download';
+      const ready = await updater.download();
+      assert.equal(ready.status,'ready',ready.message);
+      assert.match(updater.verifiedDigest,/^[a-f0-9]{64}$/);
+    }
     report({passed:true,electron:process.versions.electron,checks:['manual redirect','stream download','HTTP errors','abort before request','abort during download']});
     clearTimeout(deadline); server.close(); app.exit(0);
   } catch (error) { report({error:error.stack}); clearTimeout(deadline); server.close(); app.exit(1); }

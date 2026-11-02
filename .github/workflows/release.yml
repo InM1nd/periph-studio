@@ -43,3 +43,8 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw 'Release already exists; use a new version tag' }
           gh release create $env:GITHUB_REF_NAME $archive $checksum --verify-tag --title "Periph Studio $version" --generate-notes
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish release' }
+      - name: Verify published download inside Electron
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          PERIPH_TEST_PUBLIC_UPDATE: '1'
+        run: node --test tests/update-network.test.cjs

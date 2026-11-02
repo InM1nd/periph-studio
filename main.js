@@ -12,6 +12,7 @@ const { Sonix, SONIX_MODELS } = require('./sonix');
 const { Razer } = require('./razer');
 const ROYUAN = require('./profiles/royuan.json');
 const { PortableUpdates, RELEASES_URL } = require('./updates');
+const { createUpdateFetch } = require('./update-fetch');
 const { PortableInstaller } = require('./portable-installer');
 const { frameOptions, stateOf, watchFrame } = require('./window-frame');
 
@@ -266,7 +267,7 @@ app.whenReady().then(() => {
   });
   updates = new PortableUpdates({
     currentVersion: app.getVersion(), userData: app.getPath('userData'),
-    fetch: (url, options) => net.fetch(url, options),
+    fetch: createUpdateFetch(net),
     supported: app.isPackaged && process.platform === 'win32' && process.arch === 'x64',
     openArchive: (file) => shell.openPath(file), reveal: (file) => shell.showItemInFolder(file),
     installUpdate: async (release) => { const job = await installer.prepare(release); await installer.handoff(job); },

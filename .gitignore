@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# записи USB-обмена и отчёты об устройствах — локальные данные
+tools/kt87/captures/
+*.pcap
+*.pcapng
+periph-report-*.json
+
+# бэкапы раскладки (обычно в %APPDATA%, но на всякий случай)
+backups/
+
+.claude/
+.vscode/
+*.log
+Thumbs.db

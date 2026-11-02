@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Periph Studio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">PS</div>
+      <div class="brand-text"><b>Periph Studio</b><span>Клавиатуры и мыши</span></div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-tab="devices">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        Устройства
+      </button>
+      <div class="nav-sep" id="ryNavSep" hidden>Keydous / Royuan</div>
+      <button class="nav-item ry-nav" data-tab="overview" hidden>
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>
+        Обзор
+      </button>
+      <button class="nav-item ry-nav" data-tab="light" hidden>
+        <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg>
+        Подсветка
+      </button>
+      <button class="nav-item ry-nav" data-tab="keys" id="keysNav" hidden>
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9"/></svg>
+        Клавиши и ручка
+      </button>
+      <div class="nav-sep" id="ktNavSep" hidden>Другие устройства</div>
+      <button class="nav-item" data-tab="kt87" id="ktNav" hidden>
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M7 10h10M7 14h6"/></svg>
+        KT87 · подсветка
+      </button>
+      <button class="nav-item" data-tab="sonix" id="sxNav" hidden>
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M6 10h4M6 14h12M14 10h4"/></svg>
+        <span id="sxNavLabel">Sonix · подсветка</span>
+      </button>
+      <button class="nav-item" data-tab="via" id="viaNav" hidden>
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M7 14h10M8 10h.01M12 10h.01M16 10h.01"/></svg>
+        QMK / VIA
+      </button>
+      <button class="nav-item" data-tab="mouse" id="msNav" hidden>
+        <svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 7v4"/></svg>
+        Мышь
+      </button>
+    </nav>
+
+    <div class="side-foot">
+      <div class="side-devs">
+        <div class="side-devs-head">Подключено <span id="sideDevCount"></span></div>
+        <div id="sideDevList"><div class="sdev-empty">Поиск устройств…</div></div>
+      </div>
+      <button class="ghost small" id="logBtn">Журнал обмена</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- УСТРОЙСТВА -->
+    <section class="tab active" id="tab-devices">
+      <header class="page-head">
+        <h1>Устройства</h1>
+        <p>Всё, что подключено. Нажмите на поддерживаемое устройство, чтобы открыть его настройки.</p>
+      </header>
+      <div id="devList"></div>
+      <div class="card dev-help">
+        <h3>Нет вашей клавиатуры или мыши?</h3>
+        <p class="muted">Нажмите «Отчёт» у неизвестного устройства — сохранится файл только с USB-идентификаторами и списком интерфейсов (без серийных номеров). По нему можно найти протокол и добавить поддержку. Так можно добавить и клавиатуру друга: пусть запустит Periph Studio у себя и пришлёт отчёт.</p>
+      </div>
+    </section>
+
+    <!-- ОБЗОР -->
+    <section class="tab" id="tab-overview">
+      <header class="page-head">
+        <h1>Обзор</h1>
+        <p>Состояние клавиатуры и основные настройки.</p>
+      </header>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Устройство</h3>
+          <dl class="kv">
+            <dt>Модель</dt><dd id="ovModel">—</dd>
+            <dt>VID : PID</dt><dd id="ovVidPid">—</dd>
+            <dt>ID платы</dt><dd id="ovId">—</dd>
+            <dt>Прошивка</dt><dd id="ovFw">—</dd>
+            <dt>Подключение</dt><dd id="ovLink">—</dd>
+            <dt>Профиль</dt><dd id="ovProfile">—</dd>
+          </dl>
+        </div>
+
+        <div class="card">
+          <h3>Питание</h3>
+          <div class="battery">
+            <div class="bat-ring" id="batRing"><span id="batPct">—</span></div>
+            <div>
+              <b id="batState">—</b>
+              <span class="muted" id="batNote"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card wide">
+          <h3>Частота опроса</h3>
+          <p class="muted">Как часто клавиатура сообщает компьютеру о нажатиях. 1000 Гц — минимальная задержка.</p>
+          <div class="seg" id="rateSeg">
+            <button data-v="125">125 Гц</button>
+            <button data-v="250">250 Гц</button>
+            <button data-v="500">500 Гц</button>
+            <button data-v="1000">1000 Гц</button>
+          </div>
+        </div>
+
+        <div class="card wide">
+          <h3>Поведение</h3>
+          <label class="row-switch">
+            <span><b>Блокировка клавиши Win</b><i>Win не срабатывает во время игры</i></span>
+            <input type="checkbox" class="switch" id="optWin">
+          </label>
+          <label class="row-switch">
+            <span><b>WASD вместо стрелок</b><i>Поменять местами блок WASD и стрелки</i></span>
+            <input type="checkbox" class="switch" id="optWasd">
+          </label>
+        </div>
+
+        <div class="card wide danger">
+          <h3>Сброс</h3>
+          <p class="muted">Возвращает клавиатуру к заводским настройкам: раскладка, подсветка и параметры.</p>
+          <button class="btn-danger" id="resetBtn">Сбросить к заводским…</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ПОДСВЕТКА -->
+    <section class="tab" id="tab-light">
+      <header class="page-head">
+        <h1>Подсветка</h1>
+        <p>Изменения применяются сразу. Предпросмотр схематичный.</p>
+      </header>
+
+      <div class="card preview-card">
+        <div class="board-wrap"><div class="board" id="lightBoard"></div></div>
+      </div>
+
+      <div class="light-grid">
+        <div class="card">
+          <h3>Режим</h3>
+          <div class="modes" id="modeGrid"></div>
+        </div>
+
+        <div class="card controls" id="lightControls">
+          <h3>Параметры</h3>
+
+          <div class="ctl" id="ctlColor">
+            <label>Цвет</label>
+            <div class="colorrow">
+              <input type="color" id="colorInput" value="#ffb766">
+              <input type="text" id="colorHex" value="#FFB766" maxlength="7" spellcheck="false">
+            </div>
+            <div class="swatches" id="swatches"></div>
+          </div>
+
+          <div class="ctl" id="ctlRainbow">
+            <label class="row-switch tight">
+              <span><b>Радуга</b><i>Плавная смена цветов вместо одного</i></span>
+              <input type="checkbox" class="switch" id="rainbow">
+            </label>
+          </div>
+
+          <div class="ctl" id="ctlBright">
+            <label>Яркость <em id="brightVal">4</em></label>
+            <input type="range" id="bright" min="0" max="4" step="1" value="4">
+            <div class="ticks"><span>мин</span><span>макс</span></div>
+          </div>
+
+          <div class="ctl" id="ctlSpeed">
+            <label>Скорость <em id="speedVal">2</em></label>
+            <input type="range" id="speed" min="0" max="4" step="1" value="2">
+            <div class="ticks"><span>медленно</span><span>быстро</span></div>
+          </div>
+
+          <div class="ctl" id="ctlOption">
+            <label>Направление</label>
+            <div class="seg" id="optionSeg"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- КЛАВИШИ -->
+    <section class="tab" id="tab-keys">
+      <header class="page-head">
+        <h1>Клавиши и ручка</h1>
+        <p>Выберите клавишу или действие ручки и назначьте новое. Точка — отличие от заводского, рамка — несохранённое изменение.</p>
+      </header>
+
+      <div class="savebar" id="saveBar">
+        <span id="saveText">Изменений нет</span>
+        <div class="savebar-actions">
+          <button class="ghost small" id="backupsBtn">Папка бэкапов</button>
+          <button class="ghost small" id="restoreBtn" disabled>Вернуть как было…</button>
+          <button class="ghost" id="discardBtn" disabled>Отменить изменения</button>
+          <button class="btn-primary" id="writeBtn" disabled>Записать в клавиатуру</button>
+        </div>
+      </div>
+
+      <div class="card preview-card">
+        <div class="board-wrap"><div class="board" id="keyBoard"></div></div>
+      </div>
+
+      <div class="keys-grid">
+        <div class="card" id="inspector">
+          <h3>Клавиша</h3>
+          <div class="insp-empty" id="inspEmpty">Выберите клавишу на схеме.</div>
+          <div id="inspBody" hidden>
+            <div class="insp-title" id="inspName">—</div>
+            <dl class="kv">
+              <dt>Сейчас</dt><dd id="inspNow">—</dd>
+              <dt>Заводское</dt><dd id="inspDef">—</dd>
+              <dt>Позиция в матрице</dt><dd id="inspPos">—</dd>
+              <dt>Данные</dt><dd class="mono" id="inspRaw">—</dd>
+            </dl>
+            <span class="badge" id="inspBadge" hidden>Изменена</span>
+
+            <div class="editor" id="editor">
+              <label>Назначить</label>
+              <div class="seg" id="edType">
+                <button data-t="key">Клавиша</button>
+                <button data-t="media">Мультимедиа</button>
+                <button data-t="fn">Fn</button>
+                <button data-t="off">Отключить</button>
+              </div>
+              <select id="edKey" class="sel"></select>
+              <select id="edMedia" class="sel"></select>
+              <div class="editor-actions">
+                <button class="ghost small" id="edDefault">Заводское значение</button>
+                <button class="ghost small" id="edRevert">Как в клавиатуре</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Ручка</h3>
+          <div class="knob-list" id="knobList"></div>
+        </div>
+      </div>
+    </section>
+    <!-- KT87 -->
+    <section class="tab" id="tab-kt87">
+      <header class="page-head">
+        <h1>KT87 · подсветка</h1>
+        <p class="muted">Клавиатуры на чипе Winbond 0416:B23C: KT87 (проверено), KT108, Pulsar PCMK и другие.</p>
+        <p id="ktStatus">Клавиатура не подключена.</p>
+      </header>
+
+      <div class="notice">Настройки уходят в клавиатуру по кнопке «Применить». Текущую подсветку KT87 прочитать нельзя, поэтому переключатели не отражают то, что сейчас стоит на клавиатуре.</div>
+
+      <div class="light-grid">
+        <div class="card">
+          <h3>Эффект</h3>
+          <div class="seg kt-target" id="ktTarget">
+            <button data-v="keys" class="on">Клавиши</button>
+            <button data-v="logo">Логотип / боковая</button>
+          </div>
+          <div class="modes" id="ktEffects"></div>
+        </div>
+
+        <div class="card controls">
+          <h3>Параметры</h3>
+          <div class="ctl" id="ktCtlColor">
+            <label>Цвет</label>
+            <div class="colorrow">
+              <input type="color" id="ktColor" value="#ff6400">
+              <span class="muted small-note">фон</span>
+              <input type="color" id="ktBg" value="#000000">
+            </div>
+          </div>
+          <div class="ctl">
+            <label class="row-switch tight">
+              <span><b>Радуга</b><i>Полноцветный режим вместо одного цвета</i></span>
+              <input type="checkbox" class="switch" id="ktRainbow">
+            </label>
+          </div>
+          <div class="ctl">
+            <label>Яркость <em id="ktBrightVal">4</em></label>
+            <input type="range" id="ktBright" min="0" max="4" step="1" value="4">
+          </div>
+          <div class="ctl" id="ktCtlSpeed">
+            <label>Скорость <em id="ktSpeedVal">2</em></label>
+            <input type="range" id="ktSpeed" min="0" max="4" step="1" value="2">
+          </div>
+          <div class="ctl" id="ktCtlDir">
+            <label>Направление</label>
+            <div class="seg" id="ktDir"></div>
+          </div>
+          <div class="ctl">
+            <button class="btn-primary" id="ktApply" disabled>Применить на KT87</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- SONIX / DRIVEALL -->
+    <section class="tab" id="tab-sonix">
+      <header class="page-head">
+        <h1 id="sxName">Подсветка</h1>
+        <p class="muted">Платформа Sonix / DriveAll: MSI Forge GK600, Womier SK80, Xinmeng M87 Pro, Aula F98 Pro.</p>
+      </header>
+      <div class="notice">Протокол взят из открытого драйвера Womier SK80 (та же платформа) и на GK600 ещё не проверялся. Команды уходят в клавиатуру только по кнопке «Применить». Работает при подключении кабелем.</div>
+      <div class="light-grid">
+        <div class="card">
+          <h3>Режим</h3>
+          <div class="modes sx-modes" id="sxModes"></div>
+          <p class="small-note sx-note">Названия режимов у этой платформы не опубликованы — пробуйте номера, 0 выключает подсветку.</p>
+        </div>
+        <div class="card controls">
+          <h3>Параметры</h3>
+          <div class="ctl" id="sxCtlColor">
+            <label>Цвет</label>
+            <div class="colorrow"><input type="color" id="sxColor" value="#ff6400"></div>
+          </div>
+          <div class="ctl">
+            <label class="row-switch tight">
+              <span><b>Радуга</b><i>Многоцветный режим вместо одного цвета</i></span>
+              <input type="checkbox" class="switch" id="sxRainbow">
+            </label>
+          </div>
+          <div class="ctl">
+            <label>Яркость <em id="sxBrightVal">5</em></label>
+            <input type="range" id="sxBright" min="0" max="5" step="1" value="5">
+          </div>
+          <div class="ctl">
+            <label>Скорость <em id="sxSpeedVal">3</em></label>
+            <input type="range" id="sxSpeed" min="0" max="5" step="1" value="3">
+          </div>
+          <div class="ctl">
+            <label class="row-switch tight">
+              <span><b>Обратное направление</b><i>Для эффектов с движением</i></span>
+              <input type="checkbox" class="switch" id="sxDir">
+            </label>
+          </div>
+          <div class="ctl"><button class="btn-primary" id="sxApply" disabled>Применить</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- QMK / VIA -->
+    <section class="tab" id="tab-via">
+      <header class="page-head">
+        <h1 id="viaName">QMK / VIA</h1>
+        <p id="viaSub">—</p>
+      </header>
+      <div class="notice">Поддержка VIA сделана по открытому протоколу и на реальной VIA-клавиатуре ещё не проверялась. Настройки уходят в клавиатуру и сохраняются в её памяти только по кнопке «Применить».</div>
+      <div class="grid">
+        <div class="card">
+          <h3>Клавиатура</h3>
+          <dl class="kv">
+            <dt>VID : PID</dt><dd id="viaIds">—</dd>
+            <dt>Протокол VIA</dt><dd id="viaProto">—</dd>
+            <dt>Слоёв раскладки</dt><dd id="viaLayers">—</dd>
+            <dt>Подсветка</dt><dd id="viaChannels">—</dd>
+          </dl>
+        </div>
+        <div class="card controls" id="viaLightCard">
+          <h3>Подсветка</h3>
+          <div class="ctl" id="viaChCtl">
+            <div class="seg" id="viaCh"></div>
+          </div>
+          <div class="ctl">
+            <label>Эффект <em id="viaEffVal">0</em></label>
+            <div class="ms-row">
+              <button class="ghost small" id="viaEffPrev">◀</button>
+              <button class="ghost small" id="viaEffNext">▶</button>
+              <span class="small-note">0 — выкл, 1 — один цвет, дальше зависит от прошивки</span>
+            </div>
+          </div>
+          <div class="ctl">
+            <label>Цвет</label>
+            <div class="colorrow"><input type="color" id="viaColor" value="#ff6400"></div>
+          </div>
+          <div class="ctl">
+            <label>Яркость <em id="viaBrightVal">0</em></label>
+            <input type="range" id="viaBright" min="0" max="255" step="1" value="128">
+          </div>
+          <div class="ctl">
+            <label>Скорость <em id="viaSpeedVal">0</em></label>
+            <input type="range" id="viaSpeed" min="0" max="255" step="1" value="128">
+          </div>
+          <div class="ctl"><button class="btn-primary" id="viaApply" disabled>Применить</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- МЫШЬ LOGITECH -->
+    <section class="tab" id="tab-mouse">
+      <header class="page-head">
+        <h1 id="msName">Мышь</h1>
+        <p id="msSub">Logitech · HID++</p>
+      </header>
+
+      <div class="notice">Если запущен Logitech G HUB, он может перезаписывать DPI и частоту своими значениями — закройте его, пока настраиваете мышь здесь. Изменения уходят в мышь только по кнопкам «Применить».</div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Устройство</h3>
+          <dl class="kv">
+            <dt>Модель</dt><dd id="msModel">—</dd>
+            <dt>Протокол</dt><dd id="msProto">—</dd>
+            <dt>Заряд</dt><dd id="msBat">—</dd>
+            <dt>Питание</dt><dd id="msCharge">—</dd>
+          </dl>
+          <button class="ghost small ms-refresh" id="msRefresh">Перечитать</button>
+        </div>
+
+        <div class="card controls">
+          <h3>Чувствительность (DPI)</h3>
+          <div class="ctl">
+            <label>DPI <em id="msDpiVal">—</em></label>
+            <input type="range" id="msDpi" min="100" max="25600" step="50" value="800">
+            <div class="ticks"><span id="msDpiMin">—</span><span id="msDpiMax">—</span></div>
+          </div>
+          <div class="ctl ms-presets" id="msPresets"></div>
+          <div class="ctl ms-row">
+            <input type="text" id="msDpiInput" class="ms-num" inputmode="numeric" spellcheck="false">
+            <button class="btn-primary" id="msDpiApply" disabled>Применить DPI</button>
+          </div>
+          <p class="muted small-note" id="msDpiNow"></p>
+        </div>
+
+        <div class="card wide">
+          <h3>Частота опроса</h3>
+          <div class="seg" id="msRate"></div>
+          <div><button class="btn-primary ms-rate-apply" id="msRateApply" disabled>Применить частоту</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <b>Журнал обмена</b>
+      <div>
+        <button class="ghost small" id="logClear">Очистить</button>
+        <button class="ghost small" id="logClose">Закрыть</button>
+      </div>
+    </div>
+    <pre id="logBody"></pre>
+  </aside>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+<div class="modal" id="modal" hidden>
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button class="ghost" id="modalCancel">Отмена</button>
+      <button class="btn-danger" id="modalOk">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

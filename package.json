@@ -1,0 +1,22 @@
+{
+  "name": "periph-studio",
+  "productName": "Periph Studio",
+  "version": "0.2.0",
+  "description": "Настройка клавиатур и мышей: Keydous/Royuan, Winbond 0416:B23C, QMK/VIA, Logitech HID++",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "node scripts/build.js --dev",
+    "fix-electron": "node scripts/build.js --dev",
+    "pack": "node scripts/build.js",
+    "zip": "node scripts/build.js --no-shortcut --zip"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-hid": "^3.4.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.0",
+    "electron": "^33.0.0"
+  }
+}

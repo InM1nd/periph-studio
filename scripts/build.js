@@ -109,16 +109,11 @@ async function build() {
 /** Архив для передачи: папка программы + инструкция «Как запустить.txt» в корне */
 async function makeZip(outDir) {
   const dist = path.dirname(outDir);
-  const stage = path.join(dist, '_zip');
-  fs.rmSync(stage, { recursive: true, force: true });
-  fs.mkdirSync(stage, { recursive: true });
-  fs.copyFileSync(path.join(__dirname, 'readme-for-users.txt'), path.join(stage, 'Как запустить.txt'));
   const zip = path.join(dist, `Periph-Studio-${pkg.version}-Windows-x64.zip`);
   fs.rmSync(zip, { force: true });
-  // -a: формат по расширению (.zip); hdrcharset=UTF-8 — иначе русское имя файла пишется в OEM-кодировке
-  // без флага UTF-8, и Проводник/другие архиваторы показывают его кракозябрами
-  execFileSync(TAR, ['-a', '-c', '-f', zip, '--options', 'zip:hdrcharset=UTF-8', '-C', dist, path.basename(outDir), '-C', stage, 'Как запустить.txt'], { stdio: 'inherit' });
-  fs.rmSync(stage, { recursive: true, force: true });
+  // ZipArchive writes explicit UTF-8 filenames and works across Windows tar versions.
+  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'create-archive.ps1'), '-AppDirectory', outDir, '-InstructionFile', path.join(__dirname, 'readme-for-users.txt'), '-InstructionName', 'Как запустить.txt', '-Archive', zip], { stdio: 'inherit', windowsHide: true });
   const hash = createHash('sha256');
   for await (const chunk of fs.createReadStream(zip)) hash.update(chunk);
   fs.writeFileSync(zip + '.sha256', `${hash.digest('hex')}  ${path.basename(zip)}\n`);

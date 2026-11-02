@@ -16,8 +16,11 @@ const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.N
 const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 
 async function fixture(t, broken = false) {
-  const base = path.resolve(process.env.PERIPH_TEST_TMPDIR || os.tmpdir());
-  await fs.mkdir(base, { recursive: true });
+  const requestedBase = path.resolve(process.env.PERIPH_TEST_TMPDIR || os.tmpdir());
+  await fs.mkdir(requestedBase, { recursive: true });
+  // Windows runners expose TEMP through an 8.3 alias; use one canonical path
+  // for both ZIP entry names and the generated fixture application.
+  const base = await fs.realpath(requestedBase);
   const root = await fs.mkdtemp(path.join(base, 'periph-installer-test-'));
   const installDir = path.join(root, 'Приложение [stable]');
   const userData = path.join(root, 'Профиль [data]');

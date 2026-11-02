@@ -62,15 +62,16 @@ class PortableInstaller {
       await run(this.powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-PlanFile', planFile, '-Mode', 'Prepare'], { windowsHide: true, timeout: 180000, maxBuffer: 1024 * 1024 });
       const receipt = JSON.parse(await fs.readFile(path.join(jobDir, 'prepared.json'), 'utf8'));
       if (receipt.token !== token || receipt.version !== version) throw new Error('Invalid preparation receipt');
-    } catch (_) {
+    } catch (error) {
       let reason = 'Не удалось подготовить обновление. Приложение осталось без изменений.';
+      let detail = '';
       try {
-        const detail = JSON.parse(await fs.readFile(path.join(jobDir, 'result.json'), 'utf8')).message || '';
+        detail = JSON.parse(await fs.readFile(path.join(jobDir, 'result.json'), 'utf8')).message || '';
         if (/extra files|extra directories/i.test(detail)) reason = 'В папке приложения есть посторонние файлы. Переместите их в другую папку перед обновлением.';
         else if (/access.*denied|доступ.*запрещ|отказано в доступе/i.test(detail)) reason = 'Нет прав для замены файлов приложения. Переместите portable-папку в доступное для записи место.';
         else if (/modified|integrity|incomplete|manifest|archive/i.test(detail)) reason = 'Не удалось проверить состав обновления. Скачайте архив заново или используйте ручную установку.';
       } catch (_) { /* original app remains intact */ }
-      throw new Error(reason);
+      throw new Error(reason, { cause: detail ? new Error(detail) : error });
     }
     return { token, jobDir, script, planFile, launcher };
   }
